@@ -6,7 +6,7 @@
 # Principes
 # - Un match n'est PAS une preuve de fraude : c'est un signal à présenter à
 #   l'utilisateur ("libellé signalé par d'autres victimes"), jamais un verdict.
-# - Chaque entrée cite ses sources publiques. Statut "signale" par défaut :
+# - Chaque entrée cite ses sources publiques. Statut "reported" par défaut :
 #   aucune entrée n'affirme qu'une société est frauduleuse.
 # - Les regex s'appliquent au libellé NORMALISÉ (voir section normalization).
 #   Elles n'utilisent ni lookbehind ni flags inline, pour rester portables
@@ -16,14 +16,14 @@
 #
 # Champs d'une entrée
 #   id                identifiant stable (kebab-case)
-#   type              libelle (marchand/créancier précis) | heuristique (motif générique)
-#   channel           carte | prelevement_sepa | virement_entrant | paypal | tous
+#   type              label (marchand/créancier précis) | heuristic (motif générique)
+#   channel           card | sepa_debit | incoming_transfer | paypal | all
 #   category          clé de la section "categories"
 #   pattern           regex sur libellé normalisé
 #   examples          libellés tels que rapportés publiquement
 #   typical_amounts   valeurs ou fourchettes observées
-#   confidence        faible | moyenne | elevee  (fiabilité du signal, pas gravité)
-#   status            signale | actif | obsolete
+#   confidence        low | medium | high  (fiabilité du signal, pas gravité)
+#   status            reported | active | obsolete
 #   first_seen        date (AAAA-MM) du premier signalement trouvé
 #   sources           URLs publiques
 #   false_positives   cas légitimes connus qui pourraient matcher
@@ -100,31 +100,31 @@ entries:
   # --- Prélèvements SEPA non autorisés -------------------------------------
 
   - id: sepa-ens
-    type: libelle
-    channel: prelevement_sepa
+    type: label
+    channel: sepa_debit
     category: unauthorized_sepa_debit
     pattern: '^ENS( |$)'
     examples: ["Prélèvement européen de ENS"]
     typical_amounts: [{ min: 300, max: 1200 }]
-    confidence: elevee
-    status: signale
+    confidence: high
+    status: reported
     first_seen: "2023-04"
     sources:
       - https://www.phonandroid.com/cette-arnaque-preleve-jusqua-600e-sur-votre-compte-sans-autorisation-comment-vous-proteger.html
       - https://www.journaldugeek.com/2023/05/01/fraude-bancaire-attention-aux-prelevements-non-autorises/
       - https://www.lebigdata.fr/arnaque-faux-travaux-francais-preleves-verifiez-comptes
-    false_positives: ["Tout créancier légitime dont le nom commence par ENS (écoles, ENSAM…) : n'appliquer que sur canal prelevement_sepa et libellé réduit à ENS."]
+    false_positives: ["Tout créancier légitime dont le nom commence par ENS (écoles, ENSAM…) : n'appliquer que sur channel sepa_debit et libellé réduit à ENS."]
     advice: "Ce prélèvement correspond à une vague d'arnaques connue. Si vous ne l'avez pas autorisé, contestez-le auprès de votre banque."
 
   - id: sepa-collect-plan-int
-    type: libelle
-    channel: prelevement_sepa
+    type: label
+    channel: sepa_debit
     category: unauthorized_sepa_debit
     pattern: 'COLLECT ?PLAN( INT)?( SL)?'
     examples: ["COLLECT PLAN INT SL"]
     typical_amounts: [5.99, 8.99]
-    confidence: elevee
-    status: signale
+    confidence: high
+    status: reported
     first_seen: "2026-02"
     sources:
       - https://www.signal-arnaques.com/scam/view/898523
@@ -133,14 +133,14 @@ entries:
     advice: "De nombreux utilisateurs signalent ce créancier sans avoir signé de mandat. Contestez le prélèvement et révoquez le mandat."
 
   - id: sepa-your-service-plan
-    type: libelle
-    channel: prelevement_sepa
+    type: label
+    channel: sepa_debit
     category: unauthorized_sepa_debit
     pattern: 'YOUR ?SERVICE ?PLAN|SERVICE YOUR PLAN'
     examples: ["YOUR SERVICE PLAN, SL", "Service your plan SL"]
     typical_amounts: [4.99]
-    confidence: elevee
-    status: signale
+    confidence: high
+    status: reported
     first_seen: "2025"
     sources:
       - https://www.signal-arnaques.com/scam/view/799521
@@ -148,14 +148,14 @@ entries:
     advice: "Prélèvement mensuel signalé par de nombreuses victimes, souvent précédé d'un virement entrant de quelques centimes."
 
   - id: sepa-bp-service-collectio
-    type: libelle
-    channel: prelevement_sepa
+    type: label
+    channel: sepa_debit
     category: unauthorized_sepa_debit
     pattern: 'BP SERVICE COLLECT'
     examples: ["BP SERVICE COLLECTIO SL"]
     typical_amounts: [6.69]
-    confidence: moyenne
-    status: signale
+    confidence: medium
+    status: reported
     first_seen: "2026-03"
     sources:
       - https://www.signal-arnaques.com/scam/view/933622
@@ -165,14 +165,14 @@ entries:
   # --- Abonnements cachés (carte) ------------------------------------------
 
   - id: cb-f-auto-co
-    type: libelle
-    channel: carte
+    type: label
+    channel: card
     category: hidden_subscription
     pattern: 'F ?AUTO[. ]CO'
     examples: ["X0495 HPY*f-auto.co London 05/07"]
     typical_amounts: [39.90]
-    confidence: moyenne
-    status: signale
+    confidence: medium
+    status: reported
     first_seen: "2025-05"
     sources:
       - https://www.signal-arnaques.com/scam/view/935541
@@ -180,14 +180,14 @@ entries:
     advice: "Débit mensuel signalé comme abonnement non consenti. Une opposition carte peut être nécessaire pour l'arrêter."
 
   - id: cb-privacy-nest
-    type: libelle
-    channel: carte
+    type: label
+    channel: card
     category: hidden_subscription
     pattern: 'PRIVACY ?NEST'
     examples: ["PRIVACY-NEST.NERO BUCAREST"]
     typical_amounts: [9.95, 29.95]
-    confidence: moyenne
-    status: signale
+    confidence: medium
+    status: reported
     first_seen: "2024-04"
     sources:
       - https://www.signal-arnaques.com/scam/view/948340
@@ -195,14 +195,14 @@ entries:
     advice: "Libellé signalé pour des débits récurrents non autorisés."
 
   - id: cb-cash-remise-reduc
-    type: libelle
-    channel: carte
+    type: label
+    channel: card
     category: hidden_subscription
     pattern: 'CASH ?REMISE'
     examples: ["CASH-REMISE REDUC"]
     typical_amounts: [21.00]
-    confidence: moyenne
-    status: signale
+    confidence: medium
+    status: reported
     first_seen: "2026-06"
     sources:
       - https://www.plus.transformation.gouv.fr/experiences/7397578_fraude-carte-bleue-site-cash-remise-reduc
@@ -210,14 +210,14 @@ entries:
     advice: "Débit mensuel signalé par de nombreux usagers, souvent accompagné de frais de paiement à l'étranger."
 
   - id: cb-konipay
-    type: libelle
-    channel: carte
+    type: label
+    channel: card
     category: hidden_subscription
     pattern: 'KONIPAY'
     examples: ["KONIPAY"]
     typical_amounts: []
-    confidence: faible
-    status: signale
+    confidence: low
+    status: reported
     first_seen: "2021-01"
     sources:
       - https://www.moneyvox.fr/carte-bancaire/actualites/83429/arnaque-aux-abonnements-comment-stopper-un-paiement-regulier-par-carte-bancaire
@@ -225,14 +225,14 @@ entries:
     advice: "Paiement récurrent par carte signalé comme difficile à identifier et à résilier."
 
   - id: cb-cc247
-    type: libelle
-    channel: carte
+    type: label
+    channel: card
     category: hidden_subscription
     pattern: 'CC247'
     examples: ["Cc247.cc"]
     typical_amounts: []
-    confidence: moyenne
-    status: signale
+    confidence: medium
+    status: reported
     first_seen: "2024"
     sources:
       - https://www.signal-arnaques.com/forum/view/3479
@@ -240,14 +240,14 @@ entries:
     advice: "Libellé associé à des débits mensuels inexpliqués. Faites opposition si les débits persistent."
 
   - id: cb-sites-desabonnement-anglais
-    type: libelle
-    channel: carte
+    type: label
+    channel: card
     category: hidden_subscription
     pattern: 'BACKFORANOTHERTASTE|CONTENTHEATHENS'
     examples: ["backforanothertaste.com", "contentheathens.com"]
     typical_amounts: []
-    confidence: moyenne
-    status: signale
+    confidence: medium
+    status: reported
     first_seen: "2024"
     sources:
       - https://www.signal-arnaques.com/forum/view/3479
@@ -255,14 +255,14 @@ entries:
     advice: "Site en anglais qui ne vend rien, associé à des débits mensuels non reconnus."
 
   - id: cb-faux-colis-abonnements
-    type: libelle
-    channel: carte
+    type: label
+    channel: card
     category: hidden_subscription
     pattern: 'MYHAPPYMILLION|YAGGAOBILLING|YOGABILLING|TRACKASSIST|COSREVIEWMETIC|BOOKUNRAVEL'
     examples: ["myhappymillion.com", "yaggaobilling.net", "userportal.trackassist.cloud", "Cosreviewmetic.com", "bookunravel.io"]
     typical_amounts: [1.00, 2.00, 2.99, 62.00]
-    confidence: moyenne
-    status: signale
+    confidence: medium
+    status: reported
     first_seen: "2020-04"
     sources:
       - https://www.signal-arnaques.com/scam/view/300638
@@ -274,14 +274,14 @@ entries:
     advice: "Ce libellé fait suite à de faux SMS de livraison (frais de colis de 1 à 3 €). Le paiement initial a déclenché un abonnement : faites opposition sur votre carte."
 
   - id: cb-pyd-gvs
-    type: libelle
-    channel: carte
+    type: label
+    channel: card
     category: hidden_subscription
     pattern: 'PYD ?\* ?GVS'
     examples: ["PYD*GVSwww.c…"]
     typical_amounts: [24.90, 25.00]
-    confidence: faible
-    status: signale
+    confidence: low
+    status: reported
     first_seen: "2023-09"
     sources:
       - https://www.signal-arnaques.com/forum/view/3018
@@ -289,14 +289,14 @@ entries:
     advice: "Débit signalé comme abonnement caché après un petit paiement initial."
 
   - id: cb-concicast
-    type: libelle
-    channel: tous
+    type: label
+    channel: all
     category: opaque_subscription
     pattern: 'CONCICAST'
     examples: ["Concicast"]
     typical_amounts: [0.01, 49.90]
-    confidence: faible
-    status: signale
+    confidence: low
+    status: reported
     first_seen: "2026"
     sources:
       - https://copeps.fr/actualites/avis-de-prelevement-sarl-andre-abonnement/
@@ -304,14 +304,14 @@ entries:
     advice: "Débit mensuel souvent consécutif à une réservation validée par 0,01 €. Vérifiez si vous avez souscrit un abonnement."
 
   - id: paypal-am-apps-ltd
-    type: libelle
+    type: label
     channel: paypal
     category: hidden_subscription
     pattern: 'AM APPS LTD'
     examples: ["am Apps Ltd Luxembourg"]
     typical_amounts: [69.00]
-    confidence: faible
-    status: signale
+    confidence: low
+    status: reported
     first_seen: "2026-05"
     sources:
       - https://www.signal-arnaques.com/scam/view/924510
@@ -319,14 +319,14 @@ entries:
     advice: "Paiement PayPal signalé comme non reconnu. Ouvrez un litige depuis PayPal."
 
   - id: cb-espace-vehicule
-    type: libelle
-    channel: carte
+    type: label
+    channel: card
     category: opaque_subscription
     pattern: 'ESPACE ?VEHICULE'
     examples: ["Espace véhicule .com"]
     typical_amounts: [39.90]
-    confidence: faible
-    status: signale
+    confidence: low
+    status: reported
     first_seen: "2024"
     sources:
       - https://www.signal-arnaques.com/forum/view/3732
@@ -340,7 +340,7 @@ entries:
 heuristics:
 
   - id: h-processeur-domaine-etranger
-    channel: carte
+    channel: card
     category: hidden_subscription
     description: "Préfixe de processeur de paiement suivi d'un nom de domaine, avec ville étrangère."
     pattern: '^(HPY|PYD|SP|SQ|PAYPAL|STRIPE|SUMUP|ZTL|FS) ?\* ?[A-Z0-9 ]+[. ](COM|CO|IO|NET|CC|CLOUD|SHOP|ONLINE|APP)( |$)'
@@ -351,7 +351,7 @@ heuristics:
       - https://www.signal-arnaques.com/forum/view/3018
 
   - id: h-societe-espagnole-recouvrement
-    channel: prelevement_sepa
+    channel: sepa_debit
     category: unauthorized_sepa_debit
     description: "Créancier SEPA en SL (société espagnole) au nom générique de service ou de recouvrement."
     pattern: '(SERVICE|COLLECT|PLAN|BILLING|SUPPORT|SUBSCRIPTION)[A-Z ]* SL$'
@@ -363,7 +363,7 @@ heuristics:
       - https://www.signal-arnaques.com/scam/view/933622
 
   - id: h-mots-generiques-abonnement
-    channel: carte
+    channel: card
     category: hidden_subscription
     description: "Libellé carte composé uniquement de termes génériques d'abonnement ou de facturation."
     pattern: '(MEMBERSHIP|SUBSCRIPTION|SUBSCR|BILLING|CLUB|PREMIUM|VIP) ?(FEE|PLAN|ACCESS)?'
