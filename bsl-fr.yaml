@@ -1,0 +1,476 @@
+# =============================================================================
+# Référentiel de libellés de transactions bancaires suspectes — France
+# Destiné à Carbure (https://carbure.org/) — détection côté utilisateur
+# =============================================================================
+#
+# Principes
+# - Un match n'est PAS une preuve de fraude : c'est un signal à présenter à
+#   l'utilisateur ("libellé signalé par d'autres victimes"), jamais un verdict.
+# - Chaque entrée cite ses sources publiques. Statut "signale" par défaut :
+#   aucune entrée n'affirme qu'une société est frauduleuse.
+# - Les regex s'appliquent au libellé NORMALISÉ (voir section normalization).
+#   Elles n'utilisent ni lookbehind ni flags inline, pour rester portables
+#   (JavaScript, Python, Java, Go RE2).
+# - Les montants sont en euros. Ils servent à renforcer le score, pas à matcher
+#   seuls.
+#
+# Champs d'une entrée
+#   id                identifiant stable (kebab-case)
+#   type              libelle (marchand/créancier précis) | heuristique (motif générique)
+#   channel           carte | prelevement_sepa | virement_entrant | paypal | tous
+#   category          clé de la section "categories"
+#   pattern           regex sur libellé normalisé
+#   examples          libellés tels que rapportés publiquement
+#   typical_amounts   valeurs ou fourchettes observées
+#   confidence        faible | moyenne | elevee  (fiabilité du signal, pas gravité)
+#   status            signale | actif | obsolete
+#   first_seen        date (AAAA-MM) du premier signalement trouvé
+#   sources           URLs publiques
+#   false_positives   cas légitimes connus qui pourraient matcher
+#   advice            message affichable à l'utilisateur
+# =============================================================================
+
+version: 1
+updated_at: "2026-10-15"
+scope: France
+license: MIT
+
+# -----------------------------------------------------------------------------
+# Normalisation à appliquer AVANT le matching
+# Le canal (carte / prélèvement / virement) est déduit du libellé brut AVANT
+# de retirer les préfixes.
+# -----------------------------------------------------------------------------
+normalization:
+  steps:
+    - uppercase
+    - strip_accents            # É -> E, Ç -> C
+    - replace: { from: '[_\-\.,;:/]+', to: ' ' }   # garder '*' (préfixes processeurs) et les domaines via étape dédiée
+    - strip_prefixes:
+        - '^(PAIEMENT|PAIEMT|ACHAT) (PAR )?(CARTE|CB)( X?\d{4})?'
+        - '^CARTE X?\d{4}'
+        - '^CB '
+        - '^PRLV SEPA '
+        - '^PRELEVEMENT (EUROPEEN|SEPA) (DE )?'
+        - '^VIR(EMENT)? (SEPA )?(RECU|INST)? ?(DE )?'
+    - strip_patterns:
+        - '\b\d{2} ?\d{2}( ?\d{2,4})?\b'   # dates jj/mm(/aa)
+        - '\bX\d{4}\b'                     # fragment de carte
+        - '\b(FR|ES|GB|LU|RO|IE|NL|CY|MT)\b$'  # code pays final
+    - collapse_spaces
+  domains_note: >
+    Les libellés carte contiennent souvent un nom de domaine (ex. HPY*F-AUTO.CO).
+    Conserver une version "domaine" du libellé avant l'étape replace pour
+    matcher les entrées dont le pattern contient un point échappé ; les
+    patterns ci-dessous acceptent indifféremment point ou espace ([. ]).
+
+# -----------------------------------------------------------------------------
+# Catégories
+# -----------------------------------------------------------------------------
+categories:
+  unauthorized_sepa_debit:
+    description: >
+      Prélèvement SEPA émis sans mandat, à partir d'IBAN issus de fuites de
+      données. Le système SEPA laisse le créancier gérer le mandat, la banque
+      exécute sans vérifier.
+    remedy: "Contestation auprès de la banque jusqu'à 13 mois (opération non autorisée). Révoquer le créancier, envisager une liste blanche SEPA."
+  hidden_subscription:
+    description: >
+      Petit paiement initial par carte (0,01 € à 5 €) sur un faux site
+      (frais de colis, cadeau, test), suivi de débits récurrents sur un
+      libellé de site étranger, souvent en anglais.
+    remedy: "Opposition carte souvent nécessaire ; demande de remboursement à la banque (art. L133-18 CMF)."
+  opaque_subscription:
+    description: >
+      Service réel dont l'abonnement est mentionné mais peu visible
+      (notices, Kbis, démarches administratives). Pratique contestée, pas
+      nécessairement illégale.
+    remedy: "Résiliation sur le site du service ; contestation si consentement absent."
+  account_test:
+    description: "Micro-opération servant à vérifier qu'un IBAN ou une carte est actif, prélude à des débits plus importants."
+    remedy: "Surveiller les opérations suivantes ; prévenir la banque."
+  debit_phishing:
+    description: "Faux avis de prélèvement ou de virement envoyé par mail/SMS pour provoquer un appel ou un clic. Pas de ligne sur le relevé tant que la victime n'agit pas."
+    remedy: "Ne pas appeler le numéro indiqué ; vérifier directement dans l'application bancaire."
+
+# -----------------------------------------------------------------------------
+# Entrées "libelle" : créanciers / marchands précis signalés publiquement
+# -----------------------------------------------------------------------------
+entries:
+
+  # --- Prélèvements SEPA non autorisés -------------------------------------
+
+  - id: sepa-ens
+    type: libelle
+    channel: prelevement_sepa
+    category: unauthorized_sepa_debit
+    pattern: '^ENS( |$)'
+    examples: ["Prélèvement européen de ENS"]
+    typical_amounts: [{ min: 300, max: 1200 }]
+    confidence: elevee
+    status: signale
+    first_seen: "2023-04"
+    sources:
+      - https://www.phonandroid.com/cette-arnaque-preleve-jusqua-600e-sur-votre-compte-sans-autorisation-comment-vous-proteger.html
+      - https://www.journaldugeek.com/2023/05/01/fraude-bancaire-attention-aux-prelevements-non-autorises/
+      - https://www.lebigdata.fr/arnaque-faux-travaux-francais-preleves-verifiez-comptes
+    false_positives: ["Tout créancier légitime dont le nom commence par ENS (écoles, ENSAM…) : n'appliquer que sur canal prelevement_sepa et libellé réduit à ENS."]
+    advice: "Ce prélèvement correspond à une vague d'arnaques connue. Si vous ne l'avez pas autorisé, contestez-le auprès de votre banque."
+
+  - id: sepa-collect-plan-int
+    type: libelle
+    channel: prelevement_sepa
+    category: unauthorized_sepa_debit
+    pattern: 'COLLECT ?PLAN( INT)?( SL)?'
+    examples: ["COLLECT PLAN INT SL"]
+    typical_amounts: [5.99, 8.99]
+    confidence: elevee
+    status: signale
+    first_seen: "2026-02"
+    sources:
+      - https://www.signal-arnaques.com/scam/view/898523
+      - https://www.signal-arnaques.com/scam/view/938742
+    false_positives: []
+    advice: "De nombreux utilisateurs signalent ce créancier sans avoir signé de mandat. Contestez le prélèvement et révoquez le mandat."
+
+  - id: sepa-your-service-plan
+    type: libelle
+    channel: prelevement_sepa
+    category: unauthorized_sepa_debit
+    pattern: 'YOUR ?SERVICE ?PLAN|SERVICE YOUR PLAN'
+    examples: ["YOUR SERVICE PLAN, SL", "Service your plan SL"]
+    typical_amounts: [4.99]
+    confidence: elevee
+    status: signale
+    first_seen: "2025"
+    sources:
+      - https://www.signal-arnaques.com/scam/view/799521
+    false_positives: []
+    advice: "Prélèvement mensuel signalé par de nombreuses victimes, souvent précédé d'un virement entrant de quelques centimes."
+
+  - id: sepa-bp-service-collectio
+    type: libelle
+    channel: prelevement_sepa
+    category: unauthorized_sepa_debit
+    pattern: 'BP SERVICE COLLECT'
+    examples: ["BP SERVICE COLLECTIO SL"]
+    typical_amounts: [6.69]
+    confidence: moyenne
+    status: signale
+    first_seen: "2026-03"
+    sources:
+      - https://www.signal-arnaques.com/scam/view/933622
+    false_positives: []
+    advice: "Créancier signalé pour des prélèvements mensuels non autorisés."
+
+  # --- Abonnements cachés (carte) ------------------------------------------
+
+  - id: cb-f-auto-co
+    type: libelle
+    channel: carte
+    category: hidden_subscription
+    pattern: 'F ?AUTO[. ]CO'
+    examples: ["X0495 HPY*f-auto.co London 05/07"]
+    typical_amounts: [39.90]
+    confidence: moyenne
+    status: signale
+    first_seen: "2025-05"
+    sources:
+      - https://www.signal-arnaques.com/scam/view/935541
+    false_positives: []
+    advice: "Débit mensuel signalé comme abonnement non consenti. Une opposition carte peut être nécessaire pour l'arrêter."
+
+  - id: cb-privacy-nest
+    type: libelle
+    channel: carte
+    category: hidden_subscription
+    pattern: 'PRIVACY ?NEST'
+    examples: ["PRIVACY-NEST.NERO BUCAREST"]
+    typical_amounts: [9.95, 29.95]
+    confidence: moyenne
+    status: signale
+    first_seen: "2024-04"
+    sources:
+      - https://www.signal-arnaques.com/scam/view/948340
+    false_positives: []
+    advice: "Libellé signalé pour des débits récurrents non autorisés."
+
+  - id: cb-cash-remise-reduc
+    type: libelle
+    channel: carte
+    category: hidden_subscription
+    pattern: 'CASH ?REMISE'
+    examples: ["CASH-REMISE REDUC"]
+    typical_amounts: [21.00]
+    confidence: moyenne
+    status: signale
+    first_seen: "2026-06"
+    sources:
+      - https://www.plus.transformation.gouv.fr/experiences/7397578_fraude-carte-bleue-site-cash-remise-reduc
+    false_positives: []
+    advice: "Débit mensuel signalé par de nombreux usagers, souvent accompagné de frais de paiement à l'étranger."
+
+  - id: cb-konipay
+    type: libelle
+    channel: carte
+    category: hidden_subscription
+    pattern: 'KONIPAY'
+    examples: ["KONIPAY"]
+    typical_amounts: []
+    confidence: faible
+    status: signale
+    first_seen: "2021-01"
+    sources:
+      - https://www.moneyvox.fr/carte-bancaire/actualites/83429/arnaque-aux-abonnements-comment-stopper-un-paiement-regulier-par-carte-bancaire
+    false_positives: []
+    advice: "Paiement récurrent par carte signalé comme difficile à identifier et à résilier."
+
+  - id: cb-cc247
+    type: libelle
+    channel: carte
+    category: hidden_subscription
+    pattern: 'CC247'
+    examples: ["Cc247.cc"]
+    typical_amounts: []
+    confidence: moyenne
+    status: signale
+    first_seen: "2024"
+    sources:
+      - https://www.signal-arnaques.com/forum/view/3479
+    false_positives: []
+    advice: "Libellé associé à des débits mensuels inexpliqués. Faites opposition si les débits persistent."
+
+  - id: cb-sites-desabonnement-anglais
+    type: libelle
+    channel: carte
+    category: hidden_subscription
+    pattern: 'BACKFORANOTHERTASTE|CONTENTHEATHENS'
+    examples: ["backforanothertaste.com", "contentheathens.com"]
+    typical_amounts: []
+    confidence: moyenne
+    status: signale
+    first_seen: "2024"
+    sources:
+      - https://www.signal-arnaques.com/forum/view/3479
+    false_positives: []
+    advice: "Site en anglais qui ne vend rien, associé à des débits mensuels non reconnus."
+
+  - id: cb-faux-colis-abonnements
+    type: libelle
+    channel: carte
+    category: hidden_subscription
+    pattern: 'MYHAPPYMILLION|YAGGAOBILLING|YOGABILLING|TRACKASSIST|COSREVIEWMETIC|BOOKUNRAVEL'
+    examples: ["myhappymillion.com", "yaggaobilling.net", "userportal.trackassist.cloud", "Cosreviewmetic.com", "bookunravel.io"]
+    typical_amounts: [1.00, 2.00, 2.99, 62.00]
+    confidence: moyenne
+    status: signale
+    first_seen: "2020-04"
+    sources:
+      - https://www.signal-arnaques.com/scam/view/300638
+      - https://www.signal-arnaques.com/scam/view/227726
+      - https://www.quechoisir.org/actualite-tentative-de-phishing-l-arnaque-au-colis-est-de-retour-n79263/
+      - https://www.signal-arnaques.com/scam/view/208420
+      - https://www.signal-arnaques.com/scam/view/436222
+    false_positives: []
+    advice: "Ce libellé fait suite à de faux SMS de livraison (frais de colis de 1 à 3 €). Le paiement initial a déclenché un abonnement : faites opposition sur votre carte."
+
+  - id: cb-pyd-gvs
+    type: libelle
+    channel: carte
+    category: hidden_subscription
+    pattern: 'PYD ?\* ?GVS'
+    examples: ["PYD*GVSwww.c…"]
+    typical_amounts: [24.90, 25.00]
+    confidence: faible
+    status: signale
+    first_seen: "2023-09"
+    sources:
+      - https://www.signal-arnaques.com/forum/view/3018
+    false_positives: []
+    advice: "Débit signalé comme abonnement caché après un petit paiement initial."
+
+  - id: cb-concicast
+    type: libelle
+    channel: tous
+    category: opaque_subscription
+    pattern: 'CONCICAST'
+    examples: ["Concicast"]
+    typical_amounts: [0.01, 49.90]
+    confidence: faible
+    status: signale
+    first_seen: "2026"
+    sources:
+      - https://copeps.fr/actualites/avis-de-prelevement-sarl-andre-abonnement/
+    false_positives: ["Abonnement souscrit en connaissance de cause."]
+    advice: "Débit mensuel souvent consécutif à une réservation validée par 0,01 €. Vérifiez si vous avez souscrit un abonnement."
+
+  - id: paypal-am-apps-ltd
+    type: libelle
+    channel: paypal
+    category: hidden_subscription
+    pattern: 'AM APPS LTD'
+    examples: ["am Apps Ltd Luxembourg"]
+    typical_amounts: [69.00]
+    confidence: faible
+    status: signale
+    first_seen: "2026-05"
+    sources:
+      - https://www.signal-arnaques.com/scam/view/924510
+    false_positives: []
+    advice: "Paiement PayPal signalé comme non reconnu. Ouvrez un litige depuis PayPal."
+
+  - id: cb-espace-vehicule
+    type: libelle
+    channel: carte
+    category: opaque_subscription
+    pattern: 'ESPACE ?VEHICULE'
+    examples: ["Espace véhicule .com"]
+    typical_amounts: [39.90]
+    confidence: faible
+    status: signale
+    first_seen: "2024"
+    sources:
+      - https://www.signal-arnaques.com/forum/view/3732
+    false_positives: ["Abonnement souscrit volontairement."]
+    advice: "La commande d'une vignette sur ce site peut s'accompagner d'un abonnement mensuel mentionné en bas de formulaire."
+
+# -----------------------------------------------------------------------------
+# Heuristiques : motifs génériques, à combiner avec le contexte
+# Score suggéré = poids de l'heuristique, cumulable avec les signaux contextuels.
+# -----------------------------------------------------------------------------
+heuristics:
+
+  - id: h-processeur-domaine-etranger
+    channel: carte
+    category: hidden_subscription
+    description: "Préfixe de processeur de paiement suivi d'un nom de domaine, avec ville étrangère."
+    pattern: '^(HPY|PYD|SP|SQ|PAYPAL|STRIPE|SUMUP|ZTL|FS) ?\* ?[A-Z0-9 ]+[. ](COM|CO|IO|NET|CC|CLOUD|SHOP|ONLINE|APP)( |$)'
+    weight: 2
+    false_positives: ["Nombreux petits e-commerçants légitimes passent par ces processeurs : ne jamais alerter sur ce seul motif."]
+    sources:
+      - https://www.signal-arnaques.com/scam/view/935541
+      - https://www.signal-arnaques.com/forum/view/3018
+
+  - id: h-societe-espagnole-recouvrement
+    channel: prelevement_sepa
+    category: unauthorized_sepa_debit
+    description: "Créancier SEPA en SL (société espagnole) au nom générique de service ou de recouvrement."
+    pattern: '(SERVICE|COLLECT|PLAN|BILLING|SUPPORT|SUBSCRIPTION)[A-Z ]* SL$'
+    weight: 3
+    false_positives: ["Sociétés espagnoles légitimes (fournisseurs, opérateurs) : vérifier que le créancier est nouveau pour l'utilisateur."]
+    sources:
+      - https://www.signal-arnaques.com/scam/view/799521
+      - https://www.signal-arnaques.com/scam/view/898523
+      - https://www.signal-arnaques.com/scam/view/933622
+
+  - id: h-mots-generiques-abonnement
+    channel: carte
+    category: hidden_subscription
+    description: "Libellé carte composé uniquement de termes génériques d'abonnement ou de facturation."
+    pattern: '(MEMBERSHIP|SUBSCRIPTION|SUBSCR|BILLING|CLUB|PREMIUM|VIP) ?(FEE|PLAN|ACCESS)?'
+    weight: 1
+    false_positives: ["Abonnements légitimes (streaming, salles de sport) : pondérer par l'historique de l'utilisateur."]
+    sources:
+      - https://www.lettre-resiliation.com/actualites/loisirs/prelevements-bancaires-inconnus.html
+
+# -----------------------------------------------------------------------------
+# Signaux contextuels (non textuels) : à calculer sur l'historique
+# -----------------------------------------------------------------------------
+contextual_signals:
+
+  - id: s-micro-virement-puis-prelevement
+    description: >
+      Virement entrant de 0,01 à 0,05 € d'un émetteur inconnu, suivi dans les
+      30 jours d'un nouveau prélèvement SEPA récurrent. Schéma rapporté pour
+      Your Service Plan.
+    weight: 3
+    sources:
+      - https://www.signal-arnaques.com/scam/view/799521
+
+  - id: s-petit-paiement-puis-recurrent
+    description: >
+      Paiement carte de 0,01 à 5 € chez un marchand jamais vu, suivi d'un
+      débit plus élevé (20 à 80 €) chez le même marchand ou un libellé proche.
+    weight: 3
+    sources:
+      - https://www.moneyvox.fr/banque/actualites/70153/abonnements-caches-bercy-tente-de-lutter-contre-les-arnaques-aux-prelevements-reguliers
+      - https://www.lyoncapitale.fr/actualite/frais-de-livraison-chronopost-le-retour-dune-arnaque-par-mail
+
+  - id: s-montant-signature
+    description: "Montant typique des arnaques observées, sur un créancier nouveau."
+    amounts: [4.99, 5.99, 6.69, 8.99, 9.95, 9.99, 24.90, 29.95, 39.90, 49.90, 69.00, 69.90]
+    weight: 1
+    sources:
+      - https://www.planetegrandesecoles.com/?p=127442
+      - https://www.economiematin.fr/?p=224756
+
+  - id: s-nouveau-creancier-sepa
+    description: "Premier prélèvement d'un créancier SEPA jamais vu sur le compte."
+    weight: 1
+    sources:
+      - https://www.journaldunet.com/cybersecurite/1545279-prelevements-frauduleux-sepa-la-faille-structurelle-qui-coute-cher-aux-banques/
+
+  - id: s-frais-etranger-recurrent
+    description: "Débit mensuel accompagné de frais de paiement hors zone euro, chez un marchand inconnu."
+    weight: 1
+    sources:
+      - https://www.plus.transformation.gouv.fr/experiences/7397578_fraude-carte-bleue-site-cash-remise-reduc
+
+score_thresholds:
+  information: 2   # "Vous reconnaissez cette opération ?"
+  alert: 4        # "Opération ressemblant à une arnaque signalée"
+
+# -----------------------------------------------------------------------------
+# Liste blanche : libellés officiels souvent usurpés dans le phishing.
+# Un match ici neutralise les heuristiques.
+# -----------------------------------------------------------------------------
+allowlist:
+  - id: wl-dgfip-remboursement
+    pattern: 'REMB IMPOT REVENUS|DGFIP FINANCES PUBLIQUES'
+    note: "Libellés officiels des remboursements d'impôt sur le revenu."
+    sources:
+      - https://bourseinside.fr/?p=11648
+
+# -----------------------------------------------------------------------------
+# Campagnes de phishing sans libellé bancaire (pour contenus pédagogiques)
+# -----------------------------------------------------------------------------
+phishing_campaigns:
+  - id: phish-faux-abonnement-69
+    period: "2026-06 →"
+    description: >
+      Mails annonçant un renouvellement d'abonnement de 69 € ou 69,90 €
+      (souvent au nom d'Amazon Prime), contenant le vrai IBAN, le nom et le
+      BIC de la victime. Objectif : faire appeler un faux service client.
+    sources:
+      - https://www.economiematin.fr/?p=224756
+      - https://www.signal-arnaques.com/scam/view/931129
+  - id: phish-faux-virement-nouvel-appareil
+    period: "2026 →"
+    description: >
+      Faux avis de virement de 1 000 à 3 000 € « depuis un nouvel appareil »
+      avec un numéro à rappeler. Prélude au vishing (faux conseiller).
+    sources:
+      - https://www.signal-arnaques.com/scam/view/908307
+      - https://www.signal-arnaques.com/scam/view/935381
+  - id: phish-frais-colis
+    period: "2020 →"
+    description: "SMS ou mails de faux transporteurs réclamant 1 à 3 € de frais ; le paiement souscrit un abonnement caché."
+    sources:
+      - https://www.lyoncapitale.fr/actualite/frais-de-livraison-chronopost-le-retour-dune-arnaque-par-mail
+      - https://www.quechoisir.org/actualite-tentative-de-phishing-l-arnaque-au-colis-est-de-retour-n79263/
+
+# -----------------------------------------------------------------------------
+# Ressources de signalement à proposer à l'utilisateur
+# -----------------------------------------------------------------------------
+resources:
+  - name: Perceval
+    usage: "Signalement d'une fraude à la carte bancaire"
+    url: https://www.service-public.fr/particuliers/vosdroits/R46526
+  - name: Cybermalveillance.gouv.fr
+    usage: "Assistance et signalement"
+    url: https://www.cybermalveillance.gouv.fr/
+  - name: 33700
+    usage: "Signalement des SMS et appels frauduleux"
+    url: https://www.33700.fr/
+  - name: Signal-Arnaques
+    usage: "Recherche d'un libellé déjà signalé"
+    url: https://www.signal-arnaques.com/
