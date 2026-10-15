@@ -24,7 +24,7 @@ Le fichier est organisé en sections :
 |---|---|
 | `normalization` | Étapes de nettoyage à appliquer au libellé brut avant tout matching |
 | `categories` | Types d'arnaques, avec description et recours possibles |
-| `entries` | Créanciers ou marchands précis signalés publiquement (`type: libelle`) |
+| `entries` | Créanciers ou marchands précis signalés publiquement (`type: label`) |
 | `heuristics` | Motifs génériques pondérés, à combiner avec le contexte |
 | `contextual_signals` | Signaux non textuels à calculer sur l'historique du compte |
 | `score_thresholds` | Seuils d'information et d'alerte |
@@ -46,14 +46,14 @@ Le fichier est organisé en sections :
 
 ```yaml
 - id: sepa-ens                      # identifiant stable (kebab-case)
-  type: libelle                     # libelle | heuristique
-  channel: prelevement_sepa         # carte | prelevement_sepa | virement_entrant | paypal | tous
+  type: label                       # label | heuristic
+  channel: sepa_debit               # card | sepa_debit | incoming_transfer | paypal | all
   category: unauthorized_sepa_debit
   pattern: '^ENS( |$)'              # regex sur le libellé normalisé
   examples: ["Prélèvement européen de ENS"]
   typical_amounts: [{ min: 300, max: 1200 }]
-  confidence: elevee                # faible | moyenne | elevee (fiabilité du signal, pas gravité)
-  status: signale                   # signale | actif | obsolete
+  confidence: high                  # low | medium | high (fiabilité du signal, pas gravité)
+  status: reported                  # reported | active | obsolete
   first_seen: "2023-04"
   sources: [https://...]
   false_positives: ["..."]          # cas légitimes connus qui pourraient matcher
@@ -62,9 +62,9 @@ Le fichier est organisé en sections :
 
 ## Utilisation
 
-1. **Déduisez le canal** (carte, prélèvement, virement) à partir du libellé brut.
+1. **Déduisez le canal** (`card`, `sepa_debit`, `incoming_transfer`, `paypal`) à partir du libellé brut, avant toute normalisation.
 2. **Normalisez le libellé** en suivant les étapes de `normalization` : majuscules, suppression des accents et de la ponctuation, retrait des préfixes bancaires (`PRLV SEPA`, `PAIEMENT PAR CARTE`…), des dates et des fragments de carte.
-3. **Cherchez les correspondances** dans `entries` et `heuristics`, en filtrant sur le canal. Vérifiez ensuite `allowlist`.
+3. **Cherchez les correspondances** dans `entries` et `heuristics`, en filtrant sur le canal (une entrée en `channel: all` s'applique à tous les canaux). Vérifiez ensuite `allowlist`.
 4. **Calculez un score** en cumulant les poids (`weight`) des heuristiques et des signaux contextuels, puis comparez-le à `score_thresholds` : à partir de 2, posez la question « Vous reconnaissez cette opération ? » ; à partir de 4, signalez une opération ressemblant à une arnaque connue.
 5. **Affichez le message `advice`** et les `resources` adaptées, jamais une accusation.
 
@@ -112,7 +112,7 @@ Cet exemple ne filtre pas sur le canal et ne calcule pas de score : il montre se
 Les contributions sont bienvenues, par pull request ou par issue. Pour qu'une entrée soit acceptée :
 
 - **Citez au moins une source publique** (article de presse, site officiel, signalement sur un forum ou sur Signal-Arnaques). Les témoignages privés ne suffisent pas.
-- **Utilisez le statut `signale`** par défaut. Le référentiel décrit des signalements, pas des condamnations.
+- **Utilisez le statut `reported`** par défaut. Le référentiel décrit des signalements, pas des condamnations.
 - **Renseignez `false_positives`** dès qu'un commerçant légitime pourrait correspondre au motif.
 - **Testez votre regex** sur les libellés de `examples`, après normalisation, et vérifiez sa portabilité (pas de lookbehind, pas de flags inline).
 - **Mettez à jour `updated_at`** en tête de fichier.
